@@ -5,8 +5,7 @@ data/*
 !data/icourse.db.enc
 *.mp4
 *.wav
-tests/*
-!tests/test_no_content.py
+tests/
 temp/
 # ASR models (downloaded at runtime)
 sherpa-onnx-sense-voice-*/

@@ -595,12 +595,7 @@ class Transcriber:
         t_wait = time.time()
         while not os.path.exists(audio_path):
             if ffmpeg_proc.poll() is not None:
-                # Also classify the early exit: video-only files can fail
-                # before ffmpeg ever creates the output file.
-                stderr_text = b"".join(stderr_chunks).decode(errors="replace")
-                if "does not contain any stream" in stderr_text:
-                    raise NoAudioStreamError("ffmpeg found no audio stream (video-only file).")
-                stderr_text = stderr_text[-500:]
+                stderr_text = b"".join(stderr_chunks).decode(errors="replace")[-500:]
                 raise RuntimeError(
                     f"ffmpeg exited (rc={ffmpeg_proc.returncode}) before "
                     f"writing audio file {audio_path}.\nstderr:\n{stderr_text}"

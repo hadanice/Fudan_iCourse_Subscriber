@@ -10,7 +10,6 @@ from src.data.schema import (
     LECTURES_MIGRATION_COLUMNS,
     PPT_PAGES_MIGRATION_COLUMNS,
     SCHEMA_SQL,
-    recover_no_content,
 )
 
 
@@ -66,10 +65,6 @@ class Database:
                     self.conn.execute(
                         f"ALTER TABLE ppt_pages ADD COLUMN {col} {typedef}"
                     )
-
-            recovered = recover_no_content(self.conn)
-            if recovered:
-                print(f"[Database] Requeued {recovered} legacy No Content lecture(s); existing notes preserved.")
 
     def write_meta(self, key: str, value: str):
         """Persist a key-value pair (e.g. COURSE_IDS from CI secret)."""
@@ -218,16 +213,6 @@ class Database:
         with self._lock:
             rows = self.conn.execute(query, params).fetchall()
         return [dict(row) for row in rows]
-
-    def get_exhausted_sub_ids(self, course_id: str, max_errors: int = 3) -> set[str]:
-        """Exclude exhausted retries from the remote 'new lecture' list too."""
-        with self._lock:
-            rows = self.conn.execute(
-                "SELECT sub_id FROM lectures WHERE course_id = ? "
-                "AND processed_at IS NULL AND error_count >= ?",
-                (course_id, max_errors),
-            ).fetchall()
-        return {row["sub_id"] for row in rows}
 
     def update_transcript(self, sub_id: str, transcript: str):
         with self._lock, self.conn:
