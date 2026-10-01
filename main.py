@@ -113,10 +113,12 @@ def _enumerate_lectures(client: ICourseClient, db: Database,
             lectures = deduped
 
             known_processed = db.get_processed_sub_ids(course_id)
+            exhausted = db.get_exhausted_sub_ids(course_id)
             new_lectures = [
                 lec for lec in lectures
                 if lec.get("has_playback")
                 and str(lec["sub_id"]) not in known_processed
+                and str(lec["sub_id"]) not in exhausted
             ]
             unprocessed = db.get_unprocessed_lectures(course_id)
             new_ids = {str(lec["sub_id"]) for lec in new_lectures}

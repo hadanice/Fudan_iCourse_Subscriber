@@ -567,7 +567,9 @@ document.addEventListener("alpine:init", () => {
     },
 
     getDeletableLectures() {
-      return (this.lectures || []).filter((lec) => lec.state === "ready");
+      return (this.lectures || []).filter((lec) =>
+        ["ready", "skipped", "failed", "novideo"].includes(lec.state)
+      );
     },
     openDeleteDialog() {
       const list = this.getDeletableLectures();
