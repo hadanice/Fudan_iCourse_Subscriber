@@ -165,7 +165,6 @@ VIDEO_DOWNLOAD_CONCURRENCY = int(
 )
 
 # 是否优先使用 iCourse 官方字幕（跳过 ASR 转录）。默认关闭。
-# 所有录播音源均无法转录时，仍会尝试完整性检查通过的官方字幕兜底。
 USE_OFFICIAL_TRANSCRIPT = (
     os.environ.get("USE_OFFICIAL_TRANSCRIPT", "").strip().lower()
     in ("1", "true", "yes")
