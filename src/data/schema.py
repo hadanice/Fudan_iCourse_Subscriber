@@ -14,6 +14,24 @@ to agree on what tables and columns exist.
 from __future__ import annotations
 
 
+def recover_no_content(conn, schema: str = "main") -> int:
+    """Requeue legacy 'processed without summary' rows without deleting data.
+
+    Idempotent: errors and transcripts survive, successful summaries are
+    untouched. Used both on startup and before merging old data snapshots
+    so COALESCE cannot resurrect a terminal No Content marker.
+    The caller owns the transaction.
+    """
+    if schema not in ("main", "local"):
+        raise ValueError("Unsupported database schema")
+    return conn.execute(f"""
+        UPDATE {schema}.lectures
+        SET processed_at = NULL, emailed_at = NULL
+        WHERE processed_at IS NOT NULL
+          AND NULLIF(TRIM(summary, char(9) || char(10) || char(13) || ' '), '') IS NULL
+    """).rowcount
+
+
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS courses (
     course_id TEXT PRIMARY KEY,

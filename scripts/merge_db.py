@@ -15,6 +15,7 @@ from src.data.schema import (
     LECTURES_MIGRATION_COLUMNS,
     PPT_PAGES_MIGRATION_COLUMNS,
     SCHEMA_SQL,
+    recover_no_content,
 )
 
 
@@ -65,6 +66,11 @@ def merge(local_path: str, remote_path: str):
 
     try:
         with conn:
+            # Old workflows treated silence/video-only files as completed.
+            # Normalize BOTH snapshots before merging progress/error fields,
+            # otherwise a stale remote timestamp hides a fresh retry failure.
+            recover_no_content(conn)
+            recover_no_content(conn, "local")
             # 1) Courses: upsert
             conn.execute("""
                 INSERT OR REPLACE INTO main.courses (course_id, title, teacher)
@@ -84,13 +90,16 @@ def merge(local_path: str, remote_path: str):
             """)
 
             # 3) Lectures: merge existing rows (progress forward only)
-            #    - Progress fields: COALESCE(local, remote) — prefer non-null
+            #    - Text: preserve nonblank content; timestamps: prefer non-null
             #    - Error fields: clear if processed, otherwise keep the most info
             conn.execute("""
                 UPDATE main.lectures SET
-                    transcript    = COALESCE(l.transcript,    main.lectures.transcript),
-                    summary       = COALESCE(l.summary,       main.lectures.summary),
-                    summary_model = COALESCE(l.summary_model, main.lectures.summary_model),
+                    transcript = CASE WHEN NULLIF(TRIM(l.transcript, char(9) || char(10) || char(13) || ' '), '') IS NOT NULL
+                        THEN l.transcript ELSE main.lectures.transcript END,
+                    summary = CASE WHEN NULLIF(TRIM(l.summary, char(9) || char(10) || char(13) || ' '), '') IS NOT NULL
+                        THEN l.summary ELSE main.lectures.summary END,
+                    summary_model = CASE WHEN NULLIF(TRIM(l.summary, char(9) || char(10) || char(13) || ' '), '') IS NOT NULL
+                        THEN l.summary_model ELSE main.lectures.summary_model END,
                     processed_at  = COALESCE(l.processed_at,  main.lectures.processed_at),
                     emailed_at    = COALESCE(l.emailed_at,    main.lectures.emailed_at),
                     error_msg = CASE

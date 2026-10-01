@@ -464,7 +464,16 @@ class ICourseClient:
         return payload
 
     def get_video_url(self, course_id: str, sub_id: str) -> str | None:
-        """Get a signed MP4 video URL for a specific lecture.
+        """Compatibility helper returning the first candidate.
+
+        Audio consumers must use get_video_urls and try alternatives when
+        a recording contains no audio or produces an empty transcript.
+        """
+        urls = self.get_video_urls(course_id, sub_id)
+        return urls[0] if urls else None
+
+    def get_video_urls(self, course_id: str, sub_id: str) -> list[str]:
+        """Get distinct signed MP4 candidates for a specific lecture.
 
         Cascades through URL sources, most- to least-preferred:
           1. info.video_list[*].preview_url     — healthy lecture
@@ -478,7 +487,9 @@ class ICourseClient:
         CDN itself does not enforce the gate, so a signed URL from
         either source downloads successfully.
 
-        Returns the signed video URL string, or None if no source yields one.
+        Preserve source order without discarding alternate camera/screen
+        recordings. Query strings are allowed on MP4 URLs. Signed URLs
+        must never be printed in diagnostics.
         """
         try:
             info = self.get_sub_info(course_id, sub_id)
@@ -492,59 +503,63 @@ class ICourseClient:
         if isinstance(now, str):
             now = int(now)
 
-        # Extract base video URL from playurl dict or video_list
-        base_url = None
+        base_urls: list[str] = []
+        seen: set[str] = set()
+
+        def add(value):
+            if not isinstance(value, str):
+                return
+            parsed = urlparse(value)
+            if parsed.scheme not in ("http", "https") or not parsed.path.lower().endswith(".mp4"):
+                return
+            # CDN authentication/query parameters do not identify a new recording.
+            identity = parsed._replace(query="", fragment="").geturl()
+            if identity not in seen:
+                seen.add(identity)
+                base_urls.append(value)
 
         # Try video_list first (has preview_url without /0/ prefix)
         video_list = info.get("video_list", {})
         if isinstance(video_list, dict):
-            for _, v in video_list.items():
+            video_list = list(video_list.values())
+        if isinstance(video_list, list):
+            for v in video_list:
                 if isinstance(v, dict):
-                    preview = v.get("preview_url")
-                    if preview and preview.endswith(".mp4"):
-                        base_url = preview
-                        break
+                    add(v.get("preview_url"))
 
         # Fallback: try playurl dict (has /0/ prefix, may need stripping)
-        if not base_url:
-            playurl = info.get("playurl", {})
-            if isinstance(playurl, dict):
-                for k, v in playurl.items():
-                    if k == "now":
-                        continue
-                    if isinstance(v, str) and v.endswith(".mp4"):
-                        base_url = v
-                        break
+        playurl = info.get("playurl", {})
+        if isinstance(playurl, dict):
+            for k, v in playurl.items():
+                if k != "now":
+                    add(v)
 
         # Review-gate fallback: nested content.playback.url is preserved
         # even when code == 7001 scrubs the top-level fields above.
-        if not base_url:
-            playback = (info.get("content") or {}).get("playback") or {}
-            nested = playback.get("url")
-            if isinstance(nested, str) and nested.endswith(".mp4"):
-                base_url = nested
-                if not now:
-                    content_now = (info.get("content") or {}).get("now")
-                    if isinstance(content_now, (int, str)):
-                        now = int(content_now)
+        playback = (info.get("content") or {}).get("playback") or {}
+        add(playback.get("url"))
+        if not now:
+            content_now = (info.get("content") or {}).get("now")
+            if isinstance(content_now, (int, str)):
+                now = int(content_now)
 
         # Last resort: hit get-sub-detail (gate-free) directly.
-        if not base_url:
+        if not base_urls:
             try:
                 detail = self.get_sub_detail(course_id, sub_id)
                 content = detail.get("content", {})
                 playback = content.get("playback", {})
                 if playback and playback.get("url"):
-                    base_url = playback["url"]
+                    add(playback["url"])
             except Exception:
                 pass
 
-        if not base_url:
+        if not base_urls:
             print(f"    No video URL found for {sub_id} (tried video_list, "
                   f"playurl, content.playback, sub_detail)")
-            return None
+            return []
 
-        return self.sign_video_url(base_url, now=now)
+        return [self.sign_video_url(url, now=now) for url in base_urls]
 
     def get_stream_params(self, video_url: str) -> tuple[str, str]:
         """Get WebVPN URL and HTTP headers for direct streaming (e.g., ffmpeg).

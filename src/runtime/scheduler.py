@@ -20,6 +20,7 @@ import os
 import subprocess
 import threading
 import time
+import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Callable, Optional
@@ -131,6 +132,12 @@ class AudioHandle:
     path: str          # disk file ffmpeg writes f32le mono 16 kHz to
     process: subprocess.Popen
     stderr_chunks: list[bytes]
+    video_urls: tuple[str, ...] = ()
+
+
+@dataclass
+class _SpawnFailure:
+    error: Exception
 
 
 class _PendingSpawn:
@@ -160,7 +167,7 @@ class AudioDownloader:
         self.max_concurrent = max_concurrent or config.VIDEO_DOWNLOAD_CONCURRENCY
         self._sem = threading.BoundedSemaphore(self.max_concurrent)
         # sub_id -> AudioHandle (ready) | _PendingSpawn (spawn in flight)
-        self._active: dict[str, "AudioHandle | _PendingSpawn"] = {}
+        self._active: dict[str, AudioHandle | _PendingSpawn | _SpawnFailure] = {}
         self._lock = threading.Lock()
         self._reporter = reporter
         os.makedirs(self._dir, exist_ok=True)
@@ -173,7 +180,8 @@ class AudioDownloader:
                 if isinstance(h, AudioHandle)
             )
 
-    def schedule(self, client, course_id: str, sub_id: str) -> None:
+    def schedule(self, client, course_id: str, sub_id: str,
+                 *, video_url: str | None = None) -> None:
         """Reserve a slot for sub_id and spawn ffmpeg in the background.
 
         Returns immediately. If all slots are taken the spawn blocks in its
@@ -189,7 +197,7 @@ class AudioDownloader:
 
         threading.Thread(
             target=self._spawn_when_ready,
-            args=(client, course_id, sub_id, pending),
+            args=(client, course_id, sub_id, pending, video_url),
             name=f"audio-spawn-{sub_id}",
             daemon=True,
         ).start()
@@ -201,19 +209,18 @@ class AudioDownloader:
                 self._active.pop(sub_id, None)
 
     def _spawn_when_ready(self, client, course_id: str, sub_id: str,
-                          pending: _PendingSpawn):
+                          pending: _PendingSpawn, video_url: str | None = None):
         try:
             self._sem.acquire()
             try:
-                url = client.get_video_url(course_id, sub_id)
-                if not url:
+                urls = [video_url] if video_url else client.get_video_urls(course_id, sub_id)
+                if not urls:
                     self._pop_if_mine(sub_id, pending)
                     self._sem.release()
                     return
-                vpn_url, headers = client.get_stream_params(url)
-                path = os.path.join(self._dir, f"{sub_id}.raw")
-                if os.path.exists(path):
-                    os.remove(path)
+                vpn_url, headers = client.get_stream_params(urls[0])
+                # A cancelled pending spawn must not overwrite/delete a retry's file.
+                path = os.path.join(self._dir, f"{sub_id}-{uuid.uuid4().hex}.raw")
 
                 cmd = [
                     "ffmpeg", "-y",
@@ -246,6 +253,8 @@ class AudioDownloader:
                                 del stderr_chunks[: -1024]
                     except Exception:
                         pass
+                    finally:
+                        proc.stderr.close()
 
                 threading.Thread(
                     target=_drain, name=f"audio-stderr-{sub_id}",
@@ -255,6 +264,7 @@ class AudioDownloader:
                 handle = AudioHandle(
                     sub_id=sub_id, path=path,
                     process=proc, stderr_chunks=stderr_chunks,
+                    video_urls=tuple(urls),
                 )
 
                 # Install the handle — unless release() already removed our
@@ -291,8 +301,10 @@ class AudioDownloader:
                     target=self._monitor, args=(handle,),
                     name=f"audio-monitor-{sub_id}", daemon=True,
                 ).start()
-            except Exception:
-                self._pop_if_mine(sub_id, pending)
+            except Exception as e:
+                with self._lock:
+                    if self._active.get(sub_id) is pending:
+                        self._active[sub_id] = _SpawnFailure(e)
                 self._sem.release()
                 raise
         except Exception as e:
@@ -318,6 +330,8 @@ class AudioDownloader:
                     return None
                 if isinstance(entry, AudioHandle):
                     return entry
+                if isinstance(entry, _SpawnFailure):
+                    raise entry.error
             if time.time() > deadline:
                 raise TimeoutError(
                     f"audio download for {sub_id} did not start within "
