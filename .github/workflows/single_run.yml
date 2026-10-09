@@ -16,10 +16,6 @@ on:
 permissions:
   contents: write
 
-concurrency:
-  group: icourse-data-write
-  cancel-in-progress: false
-
 jobs:
   run:
     runs-on: ubuntu-latest

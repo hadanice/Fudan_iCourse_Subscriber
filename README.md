@@ -78,33 +78,6 @@
 
 首次运行会处理所有已有录播，后续只处理新增课次。
 
-### 声道反相导致的 No Content
-
-少数录播的左右声道人声反相，默认 `-ac 1` 合成单声道时会将人声抵消。
-参考 [xiaoberber8-ai 的恢复方案](https://github.com/xiaoberber8-ai/Fudan_iCourse_Subscriber/commit/e16254b6ec4519a4acb0df5616580282a314014e)，
-增加独立的 **Recover Side-Channel Lecture** 工作流，通过 ffmpeg wrapper 提取 `(L-R)/2`。
-这只适用于反相录播；正常录播仍用原来的 iCourse Check / Single Run。
-
-进入 Actions → Recover Side-Channel Lecture → Run workflow，选择 `main` 分支，
-填写课程 ID（`course_ids`）和需要修复的课次 ID（`reset_sub_ids`，多个用英文逗号分隔）。
-默认值为课程 `39173` 和三节故障课 `660467,666413,671966`；修复后续课次时要填写新的课次 ID。
-恢复流程会备份数据库，仅清空指定课次的旧转录、摘要和状态，保留其他课次和 PPT OCR，
-强制重新进行 ASR，关闭官方转录；临时下载失败最多尝试三轮。
-全部目标都产生有效转录和摘要后才发布到加密数据分支。
-发布前的加密数据库保留在 `data-before-sidechannel-<run_id>-<attempt>` 标签中。
-恢复过程不直接发送邮件，未发送的恢复笔记由后续正常检查补发。
-
-已有错误转录或摘要时应使用这个声道恢复流程，单纯重置处理标志会复用旧内容。
-日常 iCourse Check / Single Run 不会自动启用声道修正。
-
-来源对比：参考仓库相对共同原版 `5492d55` 新增了状态修复工具（`84a494c`）、
-声道恢复工具（`e16254b`），并调整摘要长度要求（`63b4976`）。本项目保留声道恢复工具，
-将目标课次的缓存和状态重置直接纳入恢复流程；多余的独立状态修复工具已移除。
-摘要长度调整与音频故障无关，未引入。此前的备用视频/官方转录兜底改动已撤回。
-
-离线验证：`python scripts/test_sidechannel_recovery.py`。
-音频测试需要 ffmpeg，实际合成反相立体声音频验证普通下混静音、相减恢复信号。
-
 ## 前端页面（索引与查看）
 
 ![alt text](docs/frontend.png)

@@ -17,7 +17,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: icourse-data-write
+  group: db-reset
   cancel-in-progress: false
 
 jobs:
