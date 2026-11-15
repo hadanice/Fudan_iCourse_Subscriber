@@ -2,6 +2,7 @@ import os
 
 STUDENT_ID = os.environ.get("StuId", "")
 PASSWORD = os.environ.get("UISPsw", "")
+TOTP_SECRET = os.environ.get("UIS_TOTP_SECRET", "").strip()
 
 WEBVPN_BASE = "https://webvpn.fudan.edu.cn"
 IDP_BASE = "https://id.fudan.edu.cn"
@@ -165,7 +166,8 @@ VIDEO_DOWNLOAD_CONCURRENCY = int(
     os.environ.get("VIDEO_DOWNLOAD_CONCURRENCY", "2")
 )
 
-# 是否优先使用 iCourse 官方字幕（跳过 ASR 转录）。默认关闭。
+# 是否优先使用 iCourse 官方字幕（跳过 ASR 转录）。默认优先视频；
+# 视频 URL 缺失时无论此项设置如何，均尝试以官方字幕兜底。
 USE_OFFICIAL_TRANSCRIPT = (
     os.environ.get("USE_OFFICIAL_TRANSCRIPT", "").strip().lower()
     in ("1", "true", "yes")
