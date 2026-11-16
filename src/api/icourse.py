@@ -439,14 +439,7 @@ class ICourseClient:
     def get_sub_info(self, course_id: str, sub_id: str) -> dict:
         """Get lecture info including video URLs and timestamp.
 
-        Returns the data payload from the API.
-
-        Non-zero API codes that still ship a populated data payload
-        (notably 7001 "视频未到开放时间", the school's 24h pre-release
-        review gate) are returned as partial data so the caller can
-        extract the video URL from nested content.playback.url — the
-        gate scrubs top-level video_list/playurl but not the nested
-        URL.  Only raises on HTTP failure or an entirely empty payload.
+        Returns the data payload only for a successful API response.
         """
         url = (
             f"{self.base_url}"
@@ -459,7 +452,7 @@ class ICourseClient:
         data = resp.json()
         payload = data.get("data") or {}
 
-        if data.get("code") != 0 and not payload:
+        if data.get("code") != 0:
             raise RuntimeError(
                 f"API error for sub-info {sub_id}: {data.get('msg')}"
             )
@@ -467,29 +460,12 @@ class ICourseClient:
         return payload
 
     def get_video_url(self, course_id: str, sub_id: str) -> str | None:
-        """Get a signed MP4 video URL for a specific lecture.
-
-        Cascades through URL sources, most- to least-preferred:
-          1. info.video_list[*].preview_url     — healthy lecture
-          2. info.playurl[*]                    — healthy alternate
-          3. info.content.playback.url          — review-gated (no extra call)
-          4. get-sub-detail content.playback.url — last resort
-          5. content.webp_path                   — derive MP4 from video cover
-
-        Sources 3 and 4 cover the school's pre-release review gate
-        (sub-info code 7001 "视频未到开放时间"), which scrubs top-level
-        video_list/playurl but leaves the URL in nested fields.  The
-        CDN itself does not enforce the gate, so a signed URL from
-        either source downloads successfully.
-
-        Returns a signed URL, or None if no source yields one.
-        """
+        """Get a signed video URL from an available lecture's playback list."""
         try:
             info = self.get_sub_info(course_id, sub_id)
-        except (RequestException, RuntimeError) as e:
-            print(f"    sub-info unavailable for {sub_id} "
-                  f"({type(e).__name__}); falling back to sub-detail")
-            info = {}
+        except (RequestException, RuntimeError) as exc:
+            print(f"    Playback unavailable for {sub_id} ({type(exc).__name__})")
+            return None
 
         # Get server timestamp for signing
         now = info.get("now")
@@ -520,44 +496,8 @@ class ICourseClient:
                         base_url = v
                         break
 
-        # Review-gate fallback: nested content.playback.url is preserved
-        # even when code == 7001 scrubs the top-level fields above.
         if not base_url:
-            playback = (info.get("content") or {}).get("playback") or {}
-            nested = playback.get("url")
-            if isinstance(nested, str) and nested.endswith(".mp4"):
-                base_url = nested
-                if not now:
-                    content_now = (info.get("content") or {}).get("now")
-                    if isinstance(content_now, (int, str)):
-                        now = int(content_now)
-
-        # Look for a direct URL in get-sub-detail before deriving one.
-        detail = {}
-        if not base_url:
-            try:
-                detail = self.get_sub_detail(course_id, sub_id)
-                content = detail.get("content", {})
-                playback = content.get("playback", {})
-                if playback and playback.get("url"):
-                    base_url = playback["url"]
-            except (RequestException, RuntimeError):
-                pass
-
-        if not base_url:
-            for source in (info, detail):
-                poster = (source.get("content") or {}).get("webp_path")
-                if (isinstance(poster, str) and "/Pic/" in poster
-                        and poster.endswith("_500k.webp")):
-                    base_url = poster.replace("/Pic/", "/", 1).removesuffix(
-                        "_500k.webp"
-                    ) + "_1920_1080.mp4"
-                    print(f"    Video source resolved from alternate metadata for {sub_id}")
-                    break
-
-        if not base_url:
-            print(f"    No video URL found for {sub_id} (tried video_list, "
-                  f"playurl, content.playback, sub_detail, video cover)")
+            print(f"    No playback URL available for {sub_id}.")
             return None
 
         return self.sign_video_url(base_url, now=now)

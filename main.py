@@ -16,6 +16,8 @@ Anything more interesting belongs in one of ``src/*`` modules.
 import time
 import traceback
 
+from requests.exceptions import RequestException
+
 from src.runtime import config
 from src.data.database import Database
 from src.api.emailer import Emailer
@@ -140,6 +142,14 @@ def _enumerate_lectures(client: ICourseClient, db: Database,
                     lecture.get("sub_title", ""),
                     lecture.get("date", ""),
                 )
+                try:
+                    client.get_sub_info(course_id, sub_id)
+                except (RequestException, RuntimeError) as exc:
+                    reporter.info(
+                        f"    Playback unavailable for {sub_id} ({type(exc).__name__}). "
+                        "Will check again on a future run."
+                    )
+                    continue
                 out.append((course_id, course_title, lecture))
         except Exception:
             reporter.course_enumeration_error(course_id)
