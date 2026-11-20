@@ -1,5 +1,6 @@
 import { loadContract, modelTools } from "../agent/contract.js";
 import { contextStatus, newSession } from "../agent/context.js";
+import { readCursorLocation } from "../agent/course-tools.js";
 import { defaultConfig, ModelRequestError, modelUrl, presets, testConnection } from "../agent/model.js";
 import { runTurn } from "../agent/run.js";
 import { loadConfig, saveConfig, sessions } from "../agent/store.js";
@@ -215,7 +216,7 @@ export async function makeAgentUI(app) {
     },
 
     exportChat() {
-      const data = { title: active.title, messages: active.visible };
+      const data = { title: active.title, messages: active.visible, compressions: active.compressions };
       const download = document.createElement("a");
       const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
       download.href = url;
@@ -277,12 +278,12 @@ export async function makeAgentUI(app) {
     },
 
     toolText({ name, args }) {
-      const cursor = args.cursor ? active.cursors[args.cursor]?.state : null;
       if (name === "search_lecture") {
         const terms = args.keywords.map(quote).join(" ");
         return "Searching " + terms + " · " + args.modes.join("/") + (args.cursor ? " · next page" : "");
       }
       if (name === "read_lecture") {
+        const cursor = readCursorLocation(args.cursor);
         const ids = args.lecture_ids ?? [cursor?.id];
         const labels = ids.filter(Boolean).map(id => window.ICS.db.lectureSource(id)?.lecture_title ?? id);
         const mode = args.mode ?? cursor?.mode ?? "summary";
@@ -325,8 +326,8 @@ export async function makeAgentUI(app) {
     },
 
     async send(resume = false) {
-      const text = resume ? "" : this.draft.trim();
-      if (this.running || this.historySaving || !this.configured || (!text && !resume)) return;
+      const text = resume ? "" : this.draft;
+      if (this.running || this.historySaving || !this.configured || (!resume && !text.trim())) return;
       if (!resume) this.draft = "";
       this.running = true;
       this.operationError = "";
