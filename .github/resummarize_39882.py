@@ -30,7 +30,7 @@ def generate():
         rows = database.conn.execute(
             "SELECT l.*, c.title AS course_title FROM lectures l "
             "JOIN courses c ON c.course_id = l.course_id "
-            "WHERE l.course_id = ? AND COALESCE(l.summary, '') != '' "
+            "WHERE l.course_id = ? AND l.sub_id = '695152' AND COALESCE(l.summary, '') != '' "
             "ORDER BY l.date, l.sub_id",
             (COURSE_ID,),
         ).fetchall()
@@ -49,7 +49,7 @@ def generate():
                 content, mode = bucketer.assemble(transcript, None, pages)
                 print(
                     f"[Resummarize] Start {sub_id}: {len(content)} input chars, "
-                    f"{len(old_summary)} old summary chars, target {len(content) // 4}",
+                    f"{len(old_summary)} old summary chars, target {len(content) // 3}",
                     flush=True,
                 )
                 summary, model = summarizer.summarize(row["course_title"], content)
