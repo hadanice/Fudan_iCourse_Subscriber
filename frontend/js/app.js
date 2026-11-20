@@ -246,6 +246,7 @@ async function _loadFromLegacyBlob(manifest, owner, repo, secrets, token) {
 document.addEventListener("alpine:init", () => {
   Alpine.data("app", () => ({
     view: "loading", error: null, loadingMsg: "",
+    agent: null, agentError: "",
     toast: null, toastType: "success",
     courses: [], lectures: [],
     currentCourse: null, currentLecture: null,
@@ -288,6 +289,7 @@ document.addEventListener("alpine:init", () => {
     starred: _loadStarred(),
 
     async init() {
+      this._loadAgent();
       const detected = ICS.github.detectRepo();
       const s = _loadSettings();
       this.repoOwner = s.owner || (detected?.owner ?? "");
@@ -297,6 +299,19 @@ document.addEventListener("alpine:init", () => {
       if (!creds) { this.view = "setup"; return; }
       await this._loadDB(creds);
     },
+
+    async _loadAgent() {
+      try {
+        const { makeAgentUI } = await import("./agent-ui.js");
+        this.agent = await makeAgentUI(this);
+        this.agent.connectMedia();
+      } catch (error) {
+        console.error(error);
+        this.agentError = "无法载入课程问答。请刷新页面后重试。";
+      }
+    },
+
+    openAgent() { this.navigate("agent"); },
 
     async _loadDB(creds) {
       this.view = "loading"; this.error = null;
@@ -341,10 +356,12 @@ document.addEventListener("alpine:init", () => {
 
     navigate(view, params) {
       params = params || {};
-      this._history.push({ view: this.view, courseId: this.currentCourse?.course_id, lectureId: this.currentLecture?.sub_id });
+      this._history.push({ view: this.view, courseId: this.currentCourse?.course_id,
+        lectureId: this.currentLecture?.sub_id, detailView: this.detailView });
       this._go(view, params);
     },
     _go(view, params) {
+      this.agent?.rememberReading();
       params = params || {};
       this.error = null;
       if (view === "courses") {
@@ -373,7 +390,7 @@ document.addEventListener("alpine:init", () => {
             this.lectures = ICS.db.getLectures(cid);
           }
         }
-        this.detailView = "summary";
+        this.detailView = params.detailView ?? "summary";
       }
       this.view = view;
       if (view !== "lectures") this.exportDialogOpen = false;
@@ -391,12 +408,12 @@ document.addEventListener("alpine:init", () => {
     },
     goBack() {
       const p = this._history.pop();
-      if (p) this._go(p.view, { courseId: p.courseId, subId: p.lectureId });
+      if (p) this._go(p.view, { courseId: p.courseId, subId: p.lectureId, detailView: p.detailView });
       else this._go("courses");
     },
 
     openCourse(id) { this.navigate("lectures", { courseId: id }); },
-    openLecture(id) { this.navigate("detail", { subId: id }); },
+    openLecture(id, detailView) { this.navigate("detail", { subId: id, detailView }); },
 
     /* Prev/next within the current course's lecture list.  Lectures are
        ordered chronologically (parsed from sub_title; see db.js
@@ -725,6 +742,7 @@ document.addEventListener("alpine:init", () => {
     },
 
     openSettings() {
+      this.agent?.openSettings();
       this.settingsForm = { ...(_loadCreds() || {}) };
       this.showSecrets = {};
       this.navigate("settings");
@@ -738,6 +756,7 @@ document.addEventListener("alpine:init", () => {
     },
     clearAllData() {
       if (!confirm("Clear all saved credentials?")) return;
+      this.agent?.clearCredentials();
       localStorage.removeItem(_LS + "creds");
       localStorage.removeItem(_LS + "settings");
       localStorage.removeItem(_LS + "lastSubscribed");
